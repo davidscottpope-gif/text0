@@ -1,4 +1,5 @@
 import { getSecureSession } from "@/lib/auth/server";
+import { minimax } from "@/lib/minimax";
 import { vector } from "@/lib/vector";
 import { anthropic } from "@ai-sdk/anthropic";
 import { google } from "@ai-sdk/google";
@@ -125,6 +126,11 @@ export async function POST(req: Request) {
 		} else if (model?.startsWith("grok-")) {
 			result = await streamText({
 				model: xai(model),
+				...streamOptions,
+			});
+		} else if (model?.startsWith("MiniMax-")) {
+			result = await streamText({
+				model: minimax(model),
 				...streamOptions,
 			});
 		} else {

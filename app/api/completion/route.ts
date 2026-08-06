@@ -1,6 +1,7 @@
 import { vector } from "@/lib/vector";
 import { type LanguageModelV1, streamText } from "ai";
 
+import { minimax } from "@/lib/minimax";
 import { anthropic } from "@ai-sdk/anthropic";
 import { google } from "@ai-sdk/google";
 import { groq } from "@ai-sdk/groq";
@@ -39,6 +40,8 @@ export async function POST(request: NextRequest) {
 			model = google("gemini-2.0-flash-001");
 		} else if (_model === "gemini-2.0-flash-lite-preview-02-05") {
 			model = google("gemini-2.0-flash-lite-preview-02-05");
+		} else if (_model?.startsWith("MiniMax-")) {
+			model = minimax(_model);
 		} else if (_model?.startsWith("ollama/")) {
 			const ollamaModel = _model.replace("ollama/", "");
 			model = ollama(ollamaModel);
