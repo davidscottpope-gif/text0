@@ -1,3 +1,7 @@
+import {
+	completionLengthRule,
+	suggestionConfig,
+} from "@/lib/suggestion-length";
 import { vector } from "@/lib/vector";
 import { type LanguageModelV1, streamText } from "ai";
 
@@ -17,6 +21,7 @@ export const maxDuration = 30;
 export async function POST(request: NextRequest) {
 	try {
 		const body = await request.json();
+		const length = suggestionConfig(body.suggestionLength);
 		const searchParams = request.nextUrl.searchParams;
 		const _model = searchParams.get("model");
 
@@ -86,7 +91,7 @@ export async function POST(request: NextRequest) {
       Rules:
       - USE the provided context in <context> tags
       - Read CAREFULLY the input text in <input> tags
-      - Suggest up to 10 words maximum
+      - ${completionLengthRule(body.suggestionLength)}
       - Ensure suggestions maintain semantic meaning
       - Wrap completion in <completion> tags
       - Return only the completion text
@@ -109,7 +114,7 @@ export async function POST(request: NextRequest) {
       Your completion:
     `,
 			temperature: 0.75,
-			maxTokens: 50,
+			maxTokens: length.maxTokens,
 		});
 
 		return result.toDataStreamResponse();

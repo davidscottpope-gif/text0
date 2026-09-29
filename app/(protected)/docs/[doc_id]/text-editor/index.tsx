@@ -13,6 +13,12 @@ import {
 import useDebouncedCallback from "@/hooks/use-debounced-callback";
 import { useModel } from "@/hooks/use-model";
 import { useSelectedReferences } from "@/hooks/use-selected-references";
+import { useSuggestionLength } from "@/hooks/use-suggestion-length";
+import { parseCompletion } from "@/lib/parse-completion";
+import {
+	SUGGESTION_LENGTHS,
+	type SuggestionLength,
+} from "@/lib/suggestion-length";
 import { TOUR_STEP_IDS } from "@/lib/tour-constants";
 import { cn } from "@/lib/utils";
 import { useCompletion } from "@ai-sdk/react";
@@ -39,6 +45,7 @@ export function TextEditor({
 	updatedAt: initialUpdatedAt,
 }: Readonly<TextEditorProps>) {
 	const editorRef = React.useRef<HTMLTextAreaElement>(null);
+	const ghostRef = React.useRef<HTMLDivElement>(null);
 	const [cursorPosition, setCursorPosition] = React.useState(0);
 	const [isAutocompleteEnabled, setIsAutocompleteEnabled] =
 		React.useState(true);
@@ -47,6 +54,8 @@ export function TextEditor({
 	const [updatedAt, setUpdatedAt] = React.useState(initialUpdatedAt);
 
 	const [model] = useModel();
+	const [suggestionLength, setSuggestionLength] = useSuggestionLength();
+	const maxCharacters = SUGGESTION_LENGTHS[suggestionLength].maxCharacters;
 	const { getSelectedReferences } = useSelectedReferences(documentId);
 
 	const { completion, input, setInput, handleSubmit, stop, setCompletion } =
@@ -55,6 +64,7 @@ export function TextEditor({
 			initialInput: initialContent,
 			body: {
 				references: getSelectedReferences(),
+				suggestionLength,
 			},
 		});
 
@@ -110,9 +120,10 @@ export function TextEditor({
 
 	React.useEffect(() => {
 		if (!isAutocompleteEnabled) {
+			stop();
 			setCompletion("");
 		}
-	}, [isAutocompleteEnabled, setCompletion]);
+	}, [isAutocompleteEnabled, setCompletion, stop]);
 
 	React.useEffect(() => {
 		// Only trigger autocomplete if the input change came from manual typing
@@ -176,9 +187,9 @@ export function TextEditor({
 	}, [isZenMode]);
 
 	const handleKeyDown = (e: React.KeyboardEvent) => {
-		if (e.key === "Tab" && completion) {
+		if (e.key === "Tab" && displayedCompletion) {
 			e.preventDefault();
-			const completionText = parseCompletion(completion, input);
+			const completionText = displayedCompletion;
 			stop();
 			setCompletion("");
 			const newText =
@@ -214,6 +225,7 @@ export function TextEditor({
 		const newText = e.target.value;
 		const newPosition = e.target.selectionStart;
 		stop();
+		setCompletion("");
 		setInput(newText);
 		setLastManualInput(newText); // Track that this was a manual input
 		setCursorPosition(newPosition);
@@ -437,7 +449,7 @@ export function TextEditor({
 		debouncedUpdateContent(documentId, newText);
 	};
 
-	const displayedCompletion = parseCompletion(completion, input);
+	const displayedCompletion = parseCompletion(completion, input, maxCharacters);
 
 	return (
 		<div className="relative flex h-full w-full bg-background">
@@ -498,6 +510,13 @@ export function TextEditor({
 								ref={editorRef}
 								value={input}
 								onChange={handleInput}
+								onScroll={(event) => {
+									if (ghostRef.current) {
+										ghostRef.current.scrollTop = event.currentTarget.scrollTop;
+										ghostRef.current.scrollLeft =
+											event.currentTarget.scrollLeft;
+									}
+								}}
 								onKeyDown={handleKeyDown}
 								onSelect={handleSelectionChange}
 								onMouseUp={handleSelectionChange}
@@ -522,8 +541,15 @@ export function TextEditor({
 								!pendingUpdate && (
 									<div
 										aria-hidden="true"
+										ref={(element) => {
+											ghostRef.current = element;
+											if (element && editorRef.current) {
+												element.scrollTop = editorRef.current.scrollTop;
+												element.scrollLeft = editorRef.current.scrollLeft;
+											}
+										}}
 										className={cn(
-											"pointer-events-none absolute top-0 right-0 left-0 h-full w-full flex-1 whitespace-pre-wrap font-serif",
+											"pointer-events-none absolute top-0 right-0 left-0 h-[calc(100%-2rem)] w-full overflow-hidden whitespace-pre-wrap break-words font-serif",
 											isZenMode
 												? "px-4 leading-relaxed opacity-30"
 												: "w-full px-8 text-base opacity-50",
@@ -531,11 +557,11 @@ export function TextEditor({
 												"after:absolute after:inset-0 after:animate-shine after:bg-gradient-to-r after:from-transparent after:via-primary/10 after:to-transparent",
 										)}
 									>
-										<span className="whitespace-pre-wrap">
+										<span className="whitespace-pre-wrap text-transparent">
 											{input.substring(0, cursorPosition)}
 											<span
 												className={cn(
-													"text-muted-foreground",
+													"!text-muted-foreground",
 													isModifying && "animate-pulse",
 												)}
 											>
@@ -642,6 +668,23 @@ export function TextEditor({
 									</TooltipContent>
 								</Tooltip>
 
+								<select
+									aria-label="Maximum autocomplete suggestion length"
+									value={suggestionLength}
+									onChange={(event) => {
+										stop();
+										setCompletion("");
+										setSuggestionLength(event.target.value as SuggestionLength);
+									}}
+									className="max-w-24 rounded border bg-background px-1 py-1 text-xs"
+								>
+									{Object.entries(SUGGESTION_LENGTHS).map(([value, config]) => (
+										<option key={value} value={value}>
+											{config.label}
+										</option>
+									))}
+								</select>
+
 								<TextToSpeech selectedText={selectedText} />
 
 								<VoiceTranscription
@@ -728,40 +771,4 @@ export function TextEditor({
 			)}
 		</div>
 	);
-}
-
-function parseCompletion(completion: string | undefined, input: string) {
-	if (!completion) return "";
-	const startTag = "<completion>";
-	const endTag = "</completion>";
-	if (completion.startsWith(startTag) && completion.includes(endTag)) {
-		const startIndex = startTag.length;
-		const endIndex = completion.indexOf(endTag);
-		let result = completion.substring(startIndex, endIndex);
-
-		// Handle space after input
-		if (input.endsWith(" ") && result.startsWith(" ")) {
-			result = result.trimStart();
-		}
-
-		// Remove spaces at the start of each new line
-		result = result
-			.split("\n")
-			.map((line) => {
-				// If line is only whitespace, return empty string
-				if (line.trim() === "") {
-					return "";
-				}
-				// If line starts with multiple spaces/tabs (likely code indentation), preserve it
-				if (RegExp(/^[\t ]{2,}/).exec(line)) {
-					return line;
-				}
-				// Otherwise remove leading whitespace
-				return line.trimStart();
-			})
-			.join("\n");
-
-		return result;
-	}
-	return "";
 }
